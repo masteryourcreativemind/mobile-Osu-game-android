@@ -9,8 +9,12 @@ import com.osutiles.game.repository.SongRepository
  *
  * Today it exposes only the local source. When [P2PConfig.enabled] is set (and a
  * [PeerDiscovery]/[PeerTransport] implementation is wired up), the peer-to-peer
- * swarm source is added automatically and the rest of the app (which just iterates
- * [sources]) starts offering community maps — no gameplay/UI changes required.
+ * swarm source is added automatically to [sources].
+ *
+ * NOTE: [sources] is not yet consumed by the app — the library UI, imports, and
+ * gameplay currently use only [repository]. Enabling P2P still requires wiring
+ * source enumeration, publication, and peer-audio download into the app before
+ * community maps become visible (see README "Peer-to-peer map sharing").
  */
 object MapSourceRegistry {
 
@@ -38,9 +42,21 @@ object MapSourceRegistry {
     fun sources(context: Context): List<MapSource> {
         val local = LocalMapSource(repository(context))
         return if (P2PConfig.enabled) {
-            listOf(local, PeerMapSource(peerDiscovery, peerTransport))
+            listOf(
+                local,
+                PeerMapSource(peerDiscovery, peerTransport) {
+                    isOnUnmeteredNetwork(context)
+                }
+            )
         } else {
             listOf(local)
         }
+    }
+
+    /** Actual metering state from the OS; unknown means "metered" (safe default). */
+    private fun isOnUnmeteredNetwork(context: Context): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? android.net.ConnectivityManager ?: return false
+        return !cm.isActiveNetworkMetered
     }
 }

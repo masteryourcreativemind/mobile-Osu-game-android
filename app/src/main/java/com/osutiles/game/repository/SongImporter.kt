@@ -26,11 +26,21 @@ object SongImporter {
             val dir = File(context.filesDir, "songs").apply { mkdirs() }
             val dest = File(dir, "$id.audio")
 
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                dest.outputStream().use { output ->
-                    input.copyTo(output, bufferSize = 64 * 1024)
-                }
-            } ?: return null
+            val copied = try {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { output ->
+                        input.copyTo(output, bufferSize = 64 * 1024)
+                    }
+                } != null
+            } catch (_: Throwable) {
+                false
+            }
+            if (!copied) {
+                // Never leave a partial copy behind — it would be invisible to
+                // the library and leak private storage.
+                dest.delete()
+                return null
+            }
 
             val (title, artist) = splitTitleArtist(displayName)
             Song(

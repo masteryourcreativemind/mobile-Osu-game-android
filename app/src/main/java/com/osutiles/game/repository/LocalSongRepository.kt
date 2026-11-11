@@ -39,7 +39,18 @@ class LocalSongRepository(private val context: Context) : SongRepository {
     }
 
     override fun removeSong(id: String) {
-        saveImported(loadImported().filter { it.id != id })
+        val songs = loadImported()
+        val existing = songs.firstOrNull { it.id == id } ?: return
+        // Delete the app-owned audio copy too; keep the library entry if we
+        // cannot verify ownership or the deletion fails.
+        val path = runCatching { android.net.Uri.parse(existing.uri).path }.getOrNull()
+        val file = path?.let { java.io.File(it) }
+        val songsDir = java.io.File(context.filesDir, "songs").canonicalFile
+        val owned = file != null &&
+            runCatching { file.canonicalFile.parentFile == songsDir }.getOrDefault(false)
+        if (!owned) return
+        if (file.exists() && !file.delete()) return
+        saveImported(songs.filter { it.id != id })
     }
 
     private fun loadImported(): List<Song> {

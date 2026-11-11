@@ -38,6 +38,7 @@ class GameActivity : ComponentActivity(), GameView.Listener {
     private var anchorNanos = 0L
     private var playing = false
     private var pausedBySystem = false
+    private var songEnded = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,7 +138,15 @@ class GameActivity : ComponentActivity(), GameView.Listener {
 
         anchorPositionMs = 0L
         anchorNanos = System.nanoTime()
-        mp.setOnCompletionListener { playing = false }
+        songEnded = false
+        mp.setOnCompletionListener { completed ->
+            // Keep the clock advancing past the last samples so notes near the
+            // end can still be judged and the duration timeout can fire.
+            anchorPositionMs = completed.duration.toLong()
+            anchorNanos = System.nanoTime()
+            playing = false
+            songEnded = true
+        }
         mp.start()
         playing = true
     }
@@ -145,6 +154,11 @@ class GameActivity : ComponentActivity(), GameView.Listener {
     // --- GameView.Listener ---
 
     override fun currentSongTimeMs(): Long {
+        if (songEnded) {
+            // Audio is done; free-run from the end so trailing windows expire.
+            val elapsed = (System.nanoTime() - anchorNanos) / 1_000_000L
+            return anchorPositionMs + elapsed
+        }
         val mp = mediaPlayer ?: return 0L
         return try {
             if (playing && mp.isPlaying) {

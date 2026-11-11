@@ -173,8 +173,9 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private fun isComplete(time: Long): Boolean {
         if (!ready) return false
         if (beatmap.objects.isEmpty()) {
-            // No notes to judge: finish when the song has run its course.
-            return beatmap.durationMs > 0 && time > beatmap.durationMs + 500
+            // No notes to judge: finish shortly after the song has run its
+            // course (or right away when even the duration is unknown).
+            return time > beatmap.durationMs + 500
         }
         val past = time > beatmap.durationMs + 500
         val allResolved = resolved.all { it }

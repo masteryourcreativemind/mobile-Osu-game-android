@@ -51,12 +51,19 @@ object PcmDecoder {
             codec.configure(format, null, null, 0)
             codec.start()
 
+            // Decoder output can differ from the encoded track (e.g. HE-AAC/SBR
+            // doubling the sample rate); track it via INFO_OUTPUT_FORMAT_CHANGED.
+            var outSampleRate = sampleRate
+            var outChannels = channels
+            var outPcmEncoding = AudioFormat.ENCODING_PCM_16BIT
+            var maxOutSamples = maxSamples
+
             val out = FloatArrayBuilder(initialCapacity = (sampleRate * 8))
             val bufferInfo = MediaCodec.BufferInfo()
             var sawInputEos = false
             var sawOutputEos = false
 
-            while (!sawOutputEos && out.size < maxSamples) {
+            while (!sawOutputEos && out.size < maxOutSamples) {
                 if (!sawInputEos) {
                     val inIndex = codec.dequeueInputBuffer(10_000)
                     if (inIndex >= 0) {
@@ -76,21 +83,33 @@ object PcmDecoder {
                 }
 
                 val outIndex = codec.dequeueOutputBuffer(bufferInfo, 10_000)
-                if (outIndex >= 0) {
+                if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    val changed = codec.outputFormat
+                    if (changed.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                        outSampleRate = changed.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        maxOutSamples = outSampleRate.toLong() * maxSeconds
+                    }
+                    if (changed.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                        outChannels = changed.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    }
+                    if (changed.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                        outPcmEncoding = changed.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                    }
+                } else if (outIndex >= 0) {
                     if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                         sawOutputEos = true
                     }
                     if (bufferInfo.size > 0) {
                         val outBuf = codec.getOutputBuffer(outIndex)
                         if (outBuf != null) {
-                            appendMono(outBuf, bufferInfo, channels, out)
+                            appendMono(outBuf, bufferInfo, outChannels, outPcmEncoding, out)
                         }
                     }
                     codec.releaseOutputBuffer(outIndex, false)
                 }
             }
 
-            return DecodedAudio(out.toArray(), sampleRate)
+            return DecodedAudio(out.toArray(), outSampleRate)
         } catch (t: Throwable) {
             return null
         } finally {
@@ -139,14 +158,7 @@ object PcmDecoder {
         return DecodedAudio(out.toArray(), sampleRate)
     }
 
-    /** Decoder/raw output is interleaved PCM; down-mix to mono floats. */
-    private fun appendMono(
-        buf: ByteBuffer,
-        info: MediaCodec.BufferInfo,
-        channels: Int,
-        out: FloatArrayBuilder
-    ) = appendMono(buf, info, channels, AudioFormat.ENCODING_PCM_16BIT, out)
-
+    /** PCM is interleaved; down-mix to mono floats using the actual encoding. */
     private fun appendMono(
         buf: ByteBuffer,
         info: MediaCodec.BufferInfo,

@@ -79,4 +79,15 @@ class BeatmapLogicTest {
         val bm = BeatmapGenerator.generate("silent", Difficulty.EASY, 20_000L, emptyList())
         assertTrue("fallback should still produce playable notes", bm.objects.size > 5)
     }
+
+    /** Regression: the min-gap check must not overflow and reject every onset. */
+    @Test
+    fun generatedMapUsesActualOnsetTimes() {
+        // Off-grid onset times a metronome fallback would never produce.
+        val times = listOf(812L, 1377L, 2041L, 2699L, 3303L, 4011L, 4717L, 5350L)
+        val onsets = times.map { Onset(it, 3f) }
+        val bm = BeatmapGenerator.generate("onsets", Difficulty.NORMAL, 6_000L, onsets)
+        assertTrue("expected notes at onset times, got ${bm.objects.map { it.timeMs }}",
+            bm.objects.any { it.timeMs in times })
+    }
 }

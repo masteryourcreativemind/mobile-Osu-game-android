@@ -54,9 +54,19 @@ local-only right now; the networking seam is in place and inert until switched o
     with Wi-Fi-only and storage limits.
 - `backend/SeedingManager` — pure, tested decision logic for *what* to seed.
 
-To bring the swarm online, implement `PeerDiscovery`/`PeerTransport`, call
-`MapSourceRegistry.installP2P(...)`, and set `P2PConfig.enabled = true`. No
-gameplay or UI changes are required.
+To bring the swarm online:
+
+1. Implement `PeerDiscovery`/`PeerTransport` and call
+   `MapSourceRegistry.installP2P(...)`.
+2. Set `P2PConfig.enabled = true`.
+3. **Wire the sources into the app (not yet done):** today the song library
+   (`MainActivity`), imports, and gameplay use only the local repository — no
+   code calls `MapSourceRegistry.sources()` enumeration, `publish()`, or
+   downloads peer audio before playback. Enabling P2P without this integration
+   changes nothing user-visible. The remaining work is to enumerate/merge
+   `sources()` in the library UI, publish created/imported maps through the
+   `PeerMapSource`, and download a peer map's audio to local storage before
+   starting gameplay.
 
 ## Project layout
 

@@ -54,10 +54,13 @@ object BeatmapGenerator {
             .sortedBy { it.timeMs }
 
         // Enforce the minimum gap so notes stay humanly tappable for the level.
+        // The first onset is accepted unconditionally: subtracting Long.MIN_VALUE
+        // would overflow and reject everything.
         val result = ArrayList<Long>(kept.size)
-        var last = Long.MIN_VALUE
+        var last: Long? = null
         for (o in kept) {
-            if (o.timeMs - last >= difficulty.minGapMs) {
+            val prev = last
+            if (prev == null || o.timeMs - prev >= difficulty.minGapMs) {
                 result.add(o.timeMs)
                 last = o.timeMs
             }

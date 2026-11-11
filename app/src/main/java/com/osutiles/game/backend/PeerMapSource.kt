@@ -15,7 +15,13 @@ import com.osutiles.game.model.Song
  */
 class PeerMapSource(
     private val discovery: PeerDiscovery? = null,
-    private val transport: PeerTransport? = null
+    private val transport: PeerTransport? = null,
+    /**
+     * Reports whether the current connection is un-metered (e.g. Wi-Fi). The
+     * default treats unknown networks as metered so the Wi-Fi-only seeding
+     * preference is never silently bypassed.
+     */
+    private val onUnmeteredConnection: () -> Boolean = { false }
 ) : MapSource {
 
     override val id: String = "p2p-swarm"
@@ -59,7 +65,7 @@ class PeerMapSource(
             song = song,
             sizeBytes = song.durationMs // placeholder until the file is hashed/sized
         )
-        if (SeedingManager.shouldSeed(shared, locallyCreated = true, onWifi = true)) {
+        if (SeedingManager.shouldSeed(shared, locallyCreated = true, onWifi = onUnmeteredConnection())) {
             t.seed(shared)
         }
         return song
