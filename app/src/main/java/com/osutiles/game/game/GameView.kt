@@ -35,6 +35,13 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     @Volatile private var running = false
     private var thread: Thread? = null
 
+    /** Display refresh target in Hz; frames are paced to this (capped at 144). */
+    @Volatile private var targetFps: Int = 60
+
+    fun setTargetFps(fps: Int) {
+        targetFps = fps.coerceIn(30, 144)
+    }
+
     // Per-object play state.
     private var hit: BooleanArray = BooleanArray(0)
     private var resolved: BooleanArray = BooleanArray(0)
@@ -46,31 +53,38 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private val circleFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val circleStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.WHITE
+        color = Color.rgb(242, 244, 248)
     }
     private val approachPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.WHITE
+        color = Color.rgb(154, 162, 175)
     }
     private val numberPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = Color.rgb(242, 244, 248)
         textAlign = Paint.Align.CENTER
         isFakeBoldText = true
+        isSubpixelText = true
+        isLinearText = true
     }
     private val hudPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = Color.rgb(242, 244, 248)
+        isSubpixelText = true
+        isLinearText = true
     }
     private val judgementPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         isFakeBoldText = true
+        isSubpixelText = true
+        isLinearText = true
     }
-    private val bgPaint = Paint().apply { color = Color.rgb(18, 18, 28) }
+    private val bgPaint = Paint().apply { color = Color.rgb(15, 17, 21) }
 
+    // Cohesive, slightly desaturated combo palette — modern, not neon.
     private val comboColors = intArrayOf(
-        Color.rgb(255, 102, 170), // pink
-        Color.rgb(102, 204, 255), // blue
-        Color.rgb(170, 255, 102), // green
-        Color.rgb(255, 204, 102)  // orange
+        Color.rgb(91, 141, 239),  // blue
+        Color.rgb(70, 179, 166),  // teal
+        Color.rgb(142, 124, 224), // violet
+        Color.rgb(212, 163, 115)  // warm sand
     )
 
     init {
@@ -111,11 +125,17 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     override fun run() {
         var finishedReported = false
+        var lastFrameNs = System.nanoTime()
         while (running) {
+            val frameBudgetNs = 1_000_000_000L / targetFps.coerceAtLeast(1)
             val time = listener?.currentSongTimeMs() ?: 0L
             update(time)
 
-            val canvas = holder.lockCanvas() ?: continue
+            val canvas = holder.lockCanvas()
+            if (canvas == null) {
+                try { Thread.sleep(2) } catch (_: InterruptedException) { break }
+                continue
+            }
             try {
                 draw(canvas, time)
             } finally {
@@ -128,7 +148,17 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 listener?.onFinished(scoreboard)
             }
 
-            try { Thread.sleep(8) } catch (_: InterruptedException) { break }
+            // Pace to the display refresh rate without busy-waiting.
+            val now = System.nanoTime()
+            val sleepNs = frameBudgetNs - (now - lastFrameNs)
+            if (sleepNs > 0) {
+                try {
+                    Thread.sleep(sleepNs / 1_000_000L, (sleepNs % 1_000_000L).toInt())
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+            lastFrameNs = System.nanoTime()
         }
     }
 
@@ -290,10 +320,10 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 judgementPaint.textSize = radius * 1.1f
                 judgementPaint.alpha = (255 * (1f - age / 600f)).toInt().coerceIn(0, 255)
                 judgementPaint.color = when (j) {
-                    Judgement.PERFECT -> Color.rgb(102, 204, 255)
-                    Judgement.GOOD -> Color.rgb(170, 255, 102)
-                    Judgement.MEH -> Color.rgb(255, 204, 102)
-                    Judgement.MISS -> Color.rgb(255, 90, 90)
+                    Judgement.PERFECT -> Color.rgb(91, 141, 239)  // blue
+                    Judgement.GOOD -> Color.rgb(70, 179, 166)     // teal
+                    Judgement.MEH -> Color.rgb(212, 163, 115)     // sand
+                    Judgement.MISS -> Color.rgb(201, 98, 98)      // muted red
                 }
                 canvas.drawText(j.label, w / 2f, h / 2f, judgementPaint)
             }

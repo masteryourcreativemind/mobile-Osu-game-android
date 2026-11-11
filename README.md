@@ -9,6 +9,15 @@ automatically, so you can play *any* track — including ones you add yourself.
 - **osu!-style gameplay** — approaching hit circles with shrinking approach
   rings, combo numbers, timing judgements (300 / 100 / 50 / miss), combo
   multiplier, live accuracy and an end-of-song grade (SS…D).
+- **Authentic osu! scoring** — uses the osu! ScoreV1 formula
+  (`hitValue + hitValue × comboBeforeHit × difficultyMultiplier / 25`) with
+  per-difficulty score multipliers and the standard osu! grade bands based on
+  300-hit ratio and miss count.
+- **High refresh rate & native resolution** — renders at the panel's native
+  resolution and paces frames to the display's highest supported refresh rate
+  (up to 144 Hz), requesting the best display mode from the OS. Textures are
+  vector Canvas primitives (circles, rings, text) with sub-pixel/linear text
+  so they stay crisp at any density — a muted, modern, non-flashy palette.
 - **Play the song, not a fixed chart** — maps are generated from the audio itself
   via energy-based onset detection, so notes land on the actual beats/hits you
   hear.

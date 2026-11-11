@@ -53,8 +53,36 @@ class ScoreboardTest {
     }
 
     @Test
-    fun gradeReflectsAccuracy() {
-        val ss = Scoreboard(Difficulty.NORMAL).apply { repeat(10) { apply(Judgement.PERFECT) } }
-        assertEquals("SS", ss.grade())
+    fun firstHitAwardsBaseValueNoComboBonus() {
+        // osu! ScoreV1: comboBeforeHit = 0 on the first hit, so score == hit value.
+        val sb = Scoreboard(Difficulty.NORMAL)
+        sb.apply(Judgement.PERFECT)
+        assertEquals(300L, sb.score)
+    }
+
+    @Test
+    fun comboBonusScalesWithDifficultyMultiplier() {
+        // Same combo position, harder map => more score (higher difficulty multiplier).
+        val normal = Scoreboard(Difficulty.NORMAL).apply { repeat(20) { apply(Judgement.PERFECT) } }.score
+        val insane = Scoreboard(Difficulty.INSANE).apply { repeat(20) { apply(Judgement.PERFECT) } }.score
+        assertTrue(insane > normal)
+    }
+
+    @Test
+    fun gradeFollowsOsuRules() {
+        // 100% 300s -> SS
+        assertEquals("SS", Scoreboard(Difficulty.NORMAL).apply { repeat(10) { apply(Judgement.PERFECT) } }.grade())
+        // 85% 300s, no miss -> A
+        val a = Scoreboard(Difficulty.NORMAL).apply {
+            repeat(17) { apply(Judgement.PERFECT) }
+            repeat(3) { apply(Judgement.GOOD) }
+        }
+        assertEquals("A", a.grade())
+        // High 300 ratio but a miss can never be S (S requires no misses).
+        val withMiss = Scoreboard(Difficulty.NORMAL).apply {
+            repeat(19) { apply(Judgement.PERFECT) }
+            apply(Judgement.MISS)
+        }
+        assertEquals("A", withMiss.grade())
     }
 }

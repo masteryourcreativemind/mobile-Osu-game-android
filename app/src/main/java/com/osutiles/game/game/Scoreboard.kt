@@ -12,13 +12,19 @@ enum class Judgement(val points: Int, val label: String) {
 }
 
 /**
- * Tracks score, combo and accuracy during play. Pure Kotlin / JVM-testable.
+ * Tracks score, combo and accuracy during play using osu!'s standard rules.
  *
- * Scoring mirrors osu!'s spirit: base points per judgement, a combo multiplier
- * that rewards unbroken chains, and accuracy as the weighted ratio of achieved
- * to maximum points.
+ * Score (osu! "ScoreV1"):
+ *   points += hitValue + hitValue * (comboBeforeHit * difficultyMultiplier * modMultiplier) / 25
+ * where hitValue is 300/100/50, comboBeforeHit is the combo count before this hit,
+ * and modMultiplier is 1 (no mods). A miss adds nothing and resets combo.
+ *
+ * Accuracy and grades follow the osu!standard definitions.
  */
-class Scoreboard(private val difficulty: Difficulty) {
+class Scoreboard(
+    private val difficulty: Difficulty,
+    private val modMultiplier: Double = 1.0
+) {
 
     var score: Long = 0L
         private set
@@ -43,7 +49,7 @@ class Scoreboard(private val difficulty: Difficulty) {
         }
     }
 
-    /** Apply a judgement, updating combo and score. */
+    /** Apply a judgement, updating combo and score (osu! ScoreV1). */
     fun apply(j: Judgement) {
         when (j) {
             Judgement.MISS -> {
@@ -57,16 +63,17 @@ class Scoreboard(private val difficulty: Difficulty) {
                     Judgement.MEH -> meh++
                     else -> {}
                 }
+                val comboBeforeHit = combo
                 combo++
                 if (combo > maxCombo) maxCombo = combo
-                // Base points scaled by a gentle combo multiplier (osu!-like).
-                val multiplier = 1.0 + (combo - 1) * 0.02
-                score += (j.points * multiplier).toLong()
+                val bonus = j.points.toDouble() *
+                    (comboBeforeHit * difficulty.scoreDifficultyMultiplier * modMultiplier) / 25.0
+                score += j.points + bonus.toLong()
             }
         }
     }
 
-    /** Accuracy in 0..1, weighted by judgement value (osu! formula). */
+    /** Accuracy in 0..1, weighted by judgement value (osu!standard formula). */
     fun accuracy(): Double {
         val judged = perfect + good + meh + miss
         if (judged == 0) return 1.0
@@ -77,15 +84,26 @@ class Scoreboard(private val difficulty: Difficulty) {
 
     fun counts(): IntArray = intArrayOf(perfect, good, meh, miss)
 
-    /** Letter grade from accuracy, loosely following osu!'s grade bands. */
+    /**
+     * Letter grade following osu!standard rules:
+     *  - SS: 100% accuracy (all 300s).
+     *  - S : >90% 300s, no misses, and at most 1% 50s.
+     *  - A : >80% 300s with no misses, or >90% 300s.
+     *  - B : >70% 300s with no misses, or >80% 300s.
+     *  - C : >60% 300s.
+     *  - D : otherwise.
+     */
     fun grade(): String {
-        val acc = accuracy()
+        val total = perfect + good + meh + miss
+        if (total == 0) return "D"
+        val ratio300 = perfect.toDouble() / total
+        val ratio50 = meh.toDouble() / total
         return when {
-            miss == 0 && acc >= 0.99 -> "SS"
-            acc >= 0.95 -> "S"
-            acc >= 0.90 -> "A"
-            acc >= 0.80 -> "B"
-            acc >= 0.70 -> "C"
+            perfect == total -> "SS"
+            ratio300 > 0.90 && miss == 0 && ratio50 <= 0.01 -> "S"
+            (ratio300 > 0.80 && miss == 0) || ratio300 > 0.90 -> "A"
+            (ratio300 > 0.70 && miss == 0) || ratio300 > 0.80 -> "B"
+            ratio300 > 0.60 -> "C"
             else -> "D"
         }
     }

@@ -40,7 +40,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
-        android:textColor="@color/accent_blue"
+        android:textColor="@color/accent_muted"
         android:textSize="12sp"
         app:layout_constraintTop_toBottomOf="@id/artist"
         app:layout_constraintStart_toStartOf="parent" />

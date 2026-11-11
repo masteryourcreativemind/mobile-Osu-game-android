@@ -12,7 +12,7 @@
         android:id="@+id/grade"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:textColor="@color/accent_pink"
+        android:textColor="@color/accent"
         android:textSize="72sp"
         android:textStyle="bold" />
 

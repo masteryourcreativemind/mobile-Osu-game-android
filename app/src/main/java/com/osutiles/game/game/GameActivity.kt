@@ -41,14 +41,17 @@ class GameActivity : ComponentActivity(), GameView.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        configureHighRefreshRate()
+
         container = FrameLayout(this)
         gameView = GameView(this)
+        gameView.setTargetFps(highestRefreshRateHz())
         loadingText = TextView(this).apply {
             text = "Analyzing song and building your map…"
             setTextColor(Color.WHITE)
             textSize = 18f
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.rgb(18, 18, 28))
+            setBackgroundColor(Color.rgb(15, 17, 21))
         }
         container.addView(
             gameView,
@@ -192,5 +195,35 @@ class GameActivity : ComponentActivity(), GameView.Listener {
     companion object {
         const val EXTRA_SONG_ID = "song_id"
         const val EXTRA_DIFFICULTY = "difficulty"
+
+        /** We pace gameplay up to this ceiling even on faster panels. */
+        const val MAX_FPS = 144
+    }
+
+    /** Pick this device's highest supported refresh rate (capped at [MAX_FPS]). */
+    private fun highestRefreshRateHz(): Int {
+        val disp = activeDisplay() ?: return 60
+        val best = disp.supportedModes.maxByOrNull { it.refreshRate }?.refreshRate
+            ?: disp.refreshRate
+        return best.toInt().coerceIn(60, MAX_FPS)
+    }
+
+    /** Ask the OS to drive the panel at its highest refresh mode while we play. */
+    private fun configureHighRefreshRate() {
+        val disp = activeDisplay() ?: return
+        val best = disp.supportedModes.maxByOrNull { it.refreshRate } ?: return
+        window.attributes = window.attributes.apply {
+            preferredDisplayModeId = best.modeId
+            preferredRefreshRate = best.refreshRate
+        }
+    }
+
+    private fun activeDisplay(): android.view.Display? {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            display
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay
+        }
     }
 }
