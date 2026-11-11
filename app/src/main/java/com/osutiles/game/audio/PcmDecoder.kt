@@ -1,6 +1,7 @@
 package com.osutiles.game.audio
 
 import android.content.Context
+import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -39,7 +40,11 @@ object PcmDecoder {
 
             // Raw PCM (e.g. WAV) has no decoder on many devices; read it directly.
             if (mime == "audio/raw") {
-                return decodeRaw(extractor, channels, sampleRate, maxSamples)
+                val pcmEncoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING))
+                    format.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                else
+                    AudioFormat.ENCODING_PCM_16BIT
+                return decodeRaw(extractor, channels, sampleRate, maxSamples, pcmEncoding)
             }
 
             codec = MediaCodec.createDecoderByType(mime)
@@ -103,13 +108,22 @@ object PcmDecoder {
         return null
     }
 
-    /** Read already-decoded PCM straight from the extractor (no codec needed). */
+    /**
+     * Read already-decoded PCM straight from the extractor (no codec needed).
+     * Returns null for encodings we don't understand so callers fall back to a
+     * steady-rhythm map instead of analyzing garbage.
+     */
     private fun decodeRaw(
         extractor: MediaExtractor,
         channels: Int,
         sampleRate: Int,
-        maxSamples: Long
-    ): DecodedAudio {
+        maxSamples: Long,
+        pcmEncoding: Int
+    ): DecodedAudio? {
+        if (pcmEncoding != AudioFormat.ENCODING_PCM_16BIT &&
+            pcmEncoding != AudioFormat.ENCODING_PCM_8BIT &&
+            pcmEncoding != AudioFormat.ENCODING_PCM_FLOAT
+        ) return null
         val out = FloatArrayBuilder(initialCapacity = sampleRate * 8)
         val buffer = java.nio.ByteBuffer.allocate(64 * 1024)
         val info = MediaCodec.BufferInfo()
@@ -119,33 +133,58 @@ object PcmDecoder {
             if (size < 0) break
             info.offset = 0
             info.size = size
-            appendMono(buffer, info, channels, out)
+            appendMono(buffer, info, channels, pcmEncoding, out)
             if (!extractor.advance()) break
         }
         return DecodedAudio(out.toArray(), sampleRate)
     }
 
-    /** Decoder output is interleaved 16-bit PCM; down-mix to mono floats. */
+    /** Decoder/raw output is interleaved PCM; down-mix to mono floats. */
     private fun appendMono(
         buf: ByteBuffer,
         info: MediaCodec.BufferInfo,
         channels: Int,
         out: FloatArrayBuilder
+    ) = appendMono(buf, info, channels, AudioFormat.ENCODING_PCM_16BIT, out)
+
+    private fun appendMono(
+        buf: ByteBuffer,
+        info: MediaCodec.BufferInfo,
+        channels: Int,
+        pcmEncoding: Int,
+        out: FloatArrayBuilder
     ) {
         buf.position(info.offset)
         buf.limit(info.offset + info.size)
-        val shorts = buf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-        val total = shorts.remaining()
-        if (channels <= 1) {
-            while (shorts.hasRemaining()) {
-                out.add(shorts.get() / 32768f)
+        buf.order(ByteOrder.LITTLE_ENDIAN)
+        val ch = channels.coerceAtLeast(1)
+        when (pcmEncoding) {
+            AudioFormat.ENCODING_PCM_8BIT -> {
+                // 8-bit PCM is unsigned, centered at 128.
+                val frames = info.size / ch
+                for (f in 0 until frames) {
+                    var sum = 0f
+                    for (c in 0 until ch) sum += ((buf.get().toInt() and 0xFF) - 128) / 128f
+                    out.add(sum / ch)
+                }
             }
-        } else {
-            val frames = total / channels
-            for (f in 0 until frames) {
-                var sum = 0f
-                for (c in 0 until channels) sum += shorts.get() / 32768f
-                out.add(sum / channels)
+            AudioFormat.ENCODING_PCM_FLOAT -> {
+                val floats = buf.asFloatBuffer()
+                val frames = floats.remaining() / ch
+                for (f in 0 until frames) {
+                    var sum = 0f
+                    for (c in 0 until ch) sum += floats.get()
+                    out.add(sum / ch)
+                }
+            }
+            else -> {
+                val shorts = buf.asShortBuffer()
+                val frames = shorts.remaining() / ch
+                for (f in 0 until frames) {
+                    var sum = 0f
+                    for (c in 0 until ch) sum += shorts.get() / 32768f
+                    out.add(sum / ch)
+                }
             }
         }
     }

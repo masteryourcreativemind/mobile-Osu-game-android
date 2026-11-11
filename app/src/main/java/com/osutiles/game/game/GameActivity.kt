@@ -37,6 +37,7 @@ class GameActivity : ComponentActivity(), GameView.Listener {
     private var anchorPositionMs = 0L
     private var anchorNanos = 0L
     private var playing = false
+    private var pausedBySystem = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -112,7 +113,13 @@ class GameActivity : ComponentActivity(), GameView.Listener {
         } else {
             emptyList()
         }
-        return BeatmapGenerator.generate(songId, difficulty, durationMs, onsets)
+        // If the duration probe failed, fall back to the decoded audio length.
+        val effectiveDurationMs = if (durationMs > 0 || decoded == null) {
+            durationMs
+        } else {
+            decoded.samples.size * 1000L / decoded.sampleRate
+        }
+        return BeatmapGenerator.generate(songId, difficulty, effectiveDurationMs, onsets)
     }
 
     private fun startPlayback(uri: Uri, beatmap: Beatmap) {
@@ -181,8 +188,29 @@ class GameActivity : ComponentActivity(), GameView.Listener {
 
     override fun onPause() {
         super.onPause()
-        try { mediaPlayer?.pause() } catch (_: Throwable) {}
+        val mp = mediaPlayer
+        if (mp != null && playing) {
+            try {
+                // Freeze the clock exactly where playback stops.
+                anchorPositionMs = mp.currentPosition.toLong()
+                mp.pause()
+                pausedBySystem = true
+            } catch (_: Throwable) {}
+        }
         playing = false
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!pausedBySystem) return
+        pausedBySystem = false
+        val mp = mediaPlayer ?: return
+        try {
+            // Re-anchor so the interpolated clock continues from the pause point.
+            anchorNanos = System.nanoTime()
+            mp.start()
+            playing = true
+        } catch (_: Throwable) {}
     }
 
     override fun onDestroy() {
@@ -203,19 +231,34 @@ class GameActivity : ComponentActivity(), GameView.Listener {
     /** Pick this device's highest supported refresh rate (capped at [MAX_FPS]). */
     private fun highestRefreshRateHz(): Int {
         val disp = activeDisplay() ?: return 60
-        val best = disp.supportedModes.maxByOrNull { it.refreshRate }?.refreshRate
-            ?: disp.refreshRate
+        val best = bestMode(disp)?.refreshRate ?: disp.refreshRate
         return best.toInt().coerceIn(60, MAX_FPS)
     }
 
     /** Ask the OS to drive the panel at its highest refresh mode while we play. */
     private fun configureHighRefreshRate() {
         val disp = activeDisplay() ?: return
-        val best = disp.supportedModes.maxByOrNull { it.refreshRate } ?: return
+        val best = bestMode(disp) ?: return
         window.attributes = window.attributes.apply {
             preferredDisplayModeId = best.modeId
             preferredRefreshRate = best.refreshRate
         }
+    }
+
+    /**
+     * Highest-refresh mode at the panel's current resolution. Some devices only
+     * expose their top refresh rate at a lower resolution; switching to it would
+     * shrink the playfield, so those modes are avoided unless nothing else fits.
+     */
+    private fun bestMode(disp: android.view.Display): android.view.Display.Mode? {
+        val current = disp.mode
+        val sameResolution = disp.supportedModes.filter {
+            it.physicalWidth == current.physicalWidth &&
+                it.physicalHeight == current.physicalHeight
+        }
+        val candidates = if (sameResolution.isNotEmpty()) sameResolution
+        else disp.supportedModes.toList()
+        return candidates.maxByOrNull { it.refreshRate }
     }
 
     private fun activeDisplay(): android.view.Display? {

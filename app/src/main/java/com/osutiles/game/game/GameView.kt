@@ -35,6 +35,12 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     @Volatile private var running = false
     private var thread: Thread? = null
 
+    /** Guards game-state mutations shared by the render and UI threads. */
+    private val stateLock = Any()
+
+    /** Set after [setup] publishes all game state (publication barrier). */
+    @Volatile private var ready = false
+
     /** Display refresh target in Hz; frames are paced to this (capped at 144). */
     @Volatile private var targetFps: Int = 60
 
@@ -49,7 +55,6 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     private var lastJudgement: Judgement? = null
     private var lastJudgementAtMs = Long.MIN_VALUE
-
     private val circleFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val circleStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -93,12 +98,15 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     }
 
     fun setup(beatmap: Beatmap, listener: Listener) {
-        this.beatmap = beatmap
-        this.listener = listener
-        this.scoreboard = Scoreboard(beatmap.difficulty)
-        this.hit = BooleanArray(beatmap.objects.size)
-        this.resolved = BooleanArray(beatmap.objects.size)
-        this.nextIndex = 0
+        synchronized(stateLock) {
+            this.beatmap = beatmap
+            this.listener = listener
+            this.scoreboard = Scoreboard(beatmap.difficulty)
+            this.hit = BooleanArray(beatmap.objects.size)
+            this.resolved = BooleanArray(beatmap.objects.size)
+            this.nextIndex = 0
+            ready = true // published last: makes the state above visible to the render thread
+        }
     }
 
     // --- Surface lifecycle ---
@@ -163,27 +171,32 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     }
 
     private fun isComplete(time: Long): Boolean {
-        if (!::beatmap.isInitialized) return false
+        if (!ready) return false
+        if (beatmap.objects.isEmpty()) {
+            // No notes to judge: finish when the song has run its course.
+            return beatmap.durationMs > 0 && time > beatmap.durationMs + 500
+        }
         val past = time > beatmap.durationMs + 500
         val allResolved = resolved.all { it }
-        return (past || (nextIndex >= beatmap.objects.size && allResolved)) &&
-            beatmap.objects.isNotEmpty()
+        return past || (nextIndex >= beatmap.objects.size && allResolved)
     }
 
     /** Resolve misses for objects whose hit window has fully elapsed. */
     private fun update(time: Long) {
-        if (!::beatmap.isInitialized) return
+        if (!ready) return
         val meh = beatmap.difficulty.windowMehMs
         val objs = beatmap.objects
-        while (nextIndex < objs.size && objs[nextIndex].timeMs + meh < time) {
-            if (!resolved[nextIndex]) {
-                resolved[nextIndex] = true
-                if (!hit[nextIndex]) {
-                    scoreboard.apply(Judgement.MISS)
-                    setJudgement(Judgement.MISS, time)
+        synchronized(stateLock) {
+            while (nextIndex < objs.size && objs[nextIndex].timeMs + meh < time) {
+                if (!resolved[nextIndex]) {
+                    resolved[nextIndex] = true
+                    if (!hit[nextIndex]) {
+                        scoreboard.apply(Judgement.MISS)
+                        setJudgement(Judgement.MISS, time)
+                    }
                 }
+                nextIndex++
             }
-            nextIndex++
         }
     }
 
@@ -199,7 +212,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         if (event.actionMasked != MotionEvent.ACTION_DOWN &&
             event.actionMasked != MotionEvent.ACTION_POINTER_DOWN
         ) return true
-        if (!::beatmap.isInitialized) return true
+        if (!ready) return true
 
         val time = listener?.currentSongTimeMs() ?: return true
         val w = width.toFloat()
@@ -211,32 +224,34 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         val objs = beatmap.objects
         val meh = beatmap.difficulty.windowMehMs
 
-        // Find the closest-in-time unresolved object under the finger.
-        var best = -1
-        var bestDelta = Long.MAX_VALUE
-        for (i in objs.indices) {
-            if (resolved[i] || hit[i]) continue
-            val o = objs[i]
-            val delta = o.timeMs - time
-            if (delta > meh) break // objects are time-ordered; nothing closer ahead
-            if (delta < -meh) continue
-            val cx = o.x * w
-            val cy = o.y * h
-            if (hypot((tapX - cx).toDouble(), (tapY - cy).toDouble()) <= radius * 1.15) {
-                val ad = kotlin.math.abs(delta)
-                if (ad < bestDelta) {
-                    bestDelta = ad
-                    best = i
+        synchronized(stateLock) {
+            // Find the closest-in-time unresolved object under the finger.
+            var best = -1
+            var bestDelta = Long.MAX_VALUE
+            for (i in objs.indices) {
+                if (resolved[i] || hit[i]) continue
+                val o = objs[i]
+                val delta = o.timeMs - time
+                if (delta > meh) break // objects are time-ordered; nothing closer ahead
+                if (delta < -meh) continue
+                val cx = o.x * w
+                val cy = o.y * h
+                if (hypot((tapX - cx).toDouble(), (tapY - cy).toDouble()) <= radius * 1.15) {
+                    val ad = kotlin.math.abs(delta)
+                    if (ad < bestDelta) {
+                        bestDelta = ad
+                        best = i
+                    }
                 }
             }
-        }
 
-        if (best >= 0) {
-            val j = scoreboard.judge(objs[best].timeMs - time)
-            hit[best] = true
-            resolved[best] = true
-            scoreboard.apply(j)
-            setJudgement(j, time)
+            if (best >= 0) {
+                val j = scoreboard.judge(objs[best].timeMs - time)
+                hit[best] = true
+                resolved[best] = true
+                scoreboard.apply(j)
+                setJudgement(j, time)
+            }
         }
         return true
     }
@@ -248,7 +263,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     private fun draw(canvas: Canvas, time: Long) {
         canvas.drawPaint(bgPaint)
-        if (!::beatmap.isInitialized) return
+        if (!ready) return
 
         val w = width.toFloat()
         val h = height.toFloat()
